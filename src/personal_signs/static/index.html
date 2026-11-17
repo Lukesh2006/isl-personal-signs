@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal ISL Signs</title>
+<style>
+  :root { --bg:#f5f6fb; --card:#fff; --ink:#1d2040; --muted:#5d6280; --accent:#3a4bd8; --ok:#1d7a46; --warn:#a86400; --bad:#b3261e; --line:#dfe2ef; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12131c; --card:#1c1e2b; --ink:#eceefa; --muted:#a3a7c2; --accent:#8c98ff; --ok:#5cc98a; --warn:#f0b35a; --bad:#ff8a80; --line:#2c2f42; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 880px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { margin: 0 0 4px; font-size: 1.6rem; }
+  p.lead { margin: 0 0 20px; color: var(--muted); }
+  .grid { display:grid; gap:16px; grid-template-columns: 1fr; }
+  @media (min-width: 760px) { .grid { grid-template-columns: 1.1fr 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; }
+  video { width:100%; aspect-ratio: 4/3; background:#000; border-radius:10px; object-fit:cover; }
+  label { display:block; font-size:.85rem; color:var(--muted); margin:10px 0 4px; }
+  input, select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  button { flex:1 1 140px; padding:10px 12px; border-radius:10px; border:1px solid var(--accent); background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  #status { margin-top:12px; min-height:1.5em; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  ul { padding-left: 18px; margin: 6px 0; }
+  details { margin-top: 12px; color: var(--muted); }
+  code { font-size: .85em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Personal ISL Signs</h1>
+  <p class="lead">Teach the recognizer your own way of signing with a few short clips, then let it recognize you.</p>
+
+  <div class="grid">
+    <section class="card">
+      <video id="camera" autoplay muted playsinline></video>
+      <div class="row">
+        <button id="start" class="secondary">Start camera</button>
+      </div>
+      <p style="color:var(--muted);font-size:.9rem;margin:10px 0 0">Frame yourself from head to waist with both hands visible. Each recording lasts <span id="seconds">2.5</span> s.</p>
+    </section>
+
+    <section class="card">
+      <label for="label">Sign name</label>
+      <input id="label" placeholder="e.g. hello" maxlength="40">
+      <label for="kind">Type</label>
+      <select id="kind">
+        <option value="isl_variant">My way of an ISL sign</option>
+        <option value="custom_gesture">My own custom gesture</option>
+      </select>
+      <div class="row">
+        <button id="record" disabled>Record example</button>
+        <button id="train" class="secondary">Train</button>
+        <button id="recognize" class="secondary" disabled>Recognize</button>
+      </div>
+      <div id="status" aria-live="polite"></div>
+      <div id="confirm" hidden class="row">
+        <button id="saveAnyway">Save anyway</button>
+        <button id="discard" class="secondary">Discard</button>
+      </div>
+      <h3 style="margin:18px 0 4px;font-size:1rem">Saved signs</h3>
+      <ul id="signs"><li style="color:var(--muted)">None yet.</li></ul>
+      <details>
+        <summary>Settings</summary>
+        <label for="user">Profile name (X-User)</label>
+        <input id="user" value="default" maxlength="64">
+        <label for="key">API key (only if the server requires one)</label>
+        <input id="key" type="password" autocomplete="off">
+      </details>
+    </section>
+  </div>
+</main>
+<script>
+const RECORD_MS = 2500;
+const $ = (id) => document.getElementById(id);
+let stream = null, pendingClip = null;
+
+function store(name, value) { try { localStorage.setItem(name, value); } catch (_) {} }
+function load(name) { try { return localStorage.getItem(name); } catch (_) { return null; } }
+$("user").value = load("ps-user") || "default";
+$("user").addEventListener("change", () => { store("ps-user", $("user").value); refresh(); });
+$("key").addEventListener("change", () => refresh());
+
+function headers(extra = {}) {
+  const h = { "X-User": $("user").value.trim() || "default", ...extra };
+  const key = $("key").value.trim();
+  if (key) h["Authorization"] = "Bearer " + key;
+  return h;
+}
+
+function setStatus(text, tone = "") { $("status").className = tone; $("status").textContent = text; }
+function busy(on) { for (const id of ["record", "train", "recognize"]) $(id).disabled = on || (id !== "train" && !stream); }
+
+async function api(path, options = {}) {
+  const response = await fetch(path, { ...options, headers: headers(options.headers) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || response.statusText);
+  return data;
+}
+
+$("start").onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+    $("camera").srcObject = stream;
+    busy(false);
+    setStatus("Camera ready.");
+  } catch (error) { setStatus("Camera not available: " + error.message, "bad"); }
+};
+
+function recordClip() {
+  return new Promise((resolve, reject) => {
+    const type = ["video/webm;codecs=vp8", "video/webm", "video/mp4"].find((t) => MediaRecorder.isTypeSupported(t));
+    const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    const chunks = [];
+    recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
+    recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType }));
+    recorder.onerror = (event) => reject(event.error);
+    recorder.start();
+    setTimeout(() => recorder.stop(), RECORD_MS);
+  });
+}
+
+async function countdown() {
+  for (const n of [3, 2, 1]) { setStatus("Recording in " + n + "…"); await new Promise((r) => setTimeout(r, 700)); }
+  setStatus("Recording… sign now.");
+}
+
+async function upload(clip, confirm) {
+  const label = $("label").value.trim();
+  const query = new URLSearchParams({ kind: $("kind").value, confirm: String(confirm) });
+  return api("/signs/" + encodeURIComponent(label) + "?" + query, { method: "POST", body: clip });
+}
+
+function showGate(result) {
+  if (result.saved) {
+    setStatus(`Saved ${result.label} example (${result.samples_for_sign} so far).`, "ok");
+  } else if (result.decision === "needs_confirmation") {
+    setStatus("Check this example: " + result.reasons.join(" "), "warn");
+    $("confirm").hidden = false;
+  } else {
+    setStatus("Not saved: " + result.reasons.join(" "), "bad");
+  }
+}
+
+$("record").onclick = async () => {
+  if (!$("label").value.trim()) { setStatus("Type a sign name first.", "warn"); return; }
+  busy(true); $("confirm").hidden = true;
+  try {
+    await countdown();
+    pendingClip = await recordClip();
+    setStatus("Checking the clip…");
+    showGate(await upload(pendingClip, false));
+    await refresh();
+  } catch (error) { setStatus("Could not save: " + error.message, "bad"); }
+  busy(false);
+};
+
+$("saveAnyway").onclick = async () => {
+  $("confirm").hidden = true; busy(true);
+  try { showGate(await upload(pendingClip, true)); await refresh(); }
+  catch (error) { setStatus("Could not save: " + error.message, "bad"); }
+  pendingClip = null; busy(false);
+};
+$("discard").onclick = () => { $("confirm").hidden = true; pendingClip = null; setStatus("Discarded."); };
+
+$("train").onclick = async () => {
+  busy(true); setStatus("Training…");
+  try {
+    const result = await api("/train", { method: "POST" });
+    const v = result.validation;
+    const check = v ? ` Leave-one-out check: ${Math.round(v.accuracy * 100)}% (${v.correct}/${v.total}).` : "";
+    setStatus(`Ready: ${result.sign_count} signs from ${result.clip_count} clips.${check}`, "ok");
+  } catch (error) { setStatus("Could not train yet: " + error.message, "bad"); }
+  busy(false);
+};
+
+$("recognize").onclick = async () => {
+  busy(true);
+  try {
+    await countdown();
+    const clip = await recordClip();
+    setStatus("Recognizing…");
+    const r = await api("/recognize", { method: "POST", body: clip });
+    const name = (r.suggestion || "").replaceAll("_", " ").toUpperCase();
+    if (r.decision === "accepted") setStatus("Recognized: " + name, "ok");
+    else if (r.decision === "confirm") setStatus("Was this " + name + "?", "warn");
+    else setStatus("Not recognized. " + r.reason, "bad");
+  } catch (error) { setStatus("Could not recognize: " + error.message, "bad"); }
+  busy(false);
+};
+
+async function refresh() {
+  try {
+    const data = await api("/signs");
+    const list = $("signs");
+    list.replaceChildren();
+    const entries = Object.entries(data.samples);
+    if (!entries.length) { const li = document.createElement("li"); li.textContent = "None yet."; li.style.color = "var(--muted)"; list.append(li); }
+    for (const [label, count] of entries) {
+      const li = document.createElement("li");
+      const kind = data.details[label]?.kind === "custom_gesture" ? " (custom)" : "";
+      li.textContent = `${label.replaceAll("_", " ")}${kind}: ${count} clip${count === 1 ? "" : "s"}`;
+      list.append(li);
+    }
+  } catch (_) { /* server unreachable or key needed; status shows on the next action */ }
+}
+refresh();
+</script>
+</body>
+</html>
