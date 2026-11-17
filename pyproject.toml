@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-signs"
+version = "0.1.0"
+description = "Personal Indian Sign Language recognition: teach it your signs with a few clips (MediaPipe + DTW)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Lukesh2006" }]
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "mediapipe>=0.10.14",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+]
+
+[project.optional-dependencies]
+test = ["httpx>=0.27"]
+
+[project.scripts]
+personal-signs = "personal_signs.cli:main"
+
+[project.urls]
+Homepage = "https://signbridgeco.xyz"
+Source = "https://github.com/Lukesh2006/isl-personal-signs"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+personal_signs = ["static/*.html"]

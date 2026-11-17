@@ -1,0 +1,23 @@
+# Recordings, trained models and reports stay on the machine (personal data)
+data/
+data-*/
+
+# MediaPipe model files are downloaded with: python -m personal_signs download-models
+models/
+*.task
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Secrets and editors
+.env
+*.env
+!deploy/ubuntu/*.env.example
+.vscode/
+.idea/
