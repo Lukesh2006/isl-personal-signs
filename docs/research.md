@@ -3,6 +3,37 @@
 Papers this project builds on or compares itself with. Every link was checked
 against arXiv or Crossref; follow it for the full paper and its authors.
 
+```mermaid
+flowchart LR
+    subgraph USED["Used directly"]
+        DTW["DTW alignment (1)"]
+        MPF["MediaPipe framework (2)"]
+        POSE["BlazePose body (3)"]
+        HAND["MediaPipe Hands (4)"]
+        FACE["Face mesh (5)"]
+    end
+    subgraph FEW["Learning from a few examples"]
+        MN["Matching Networks (6)"]
+        PN["Prototypical Networks (7)"]
+    end
+    subgraph SLR["Sign language recognition"]
+        INC["INCLUDE · ISL (8)"]
+        WL["WLASL (9)"]
+        SAM["Skeleton multi-modal (10)"]
+        VS["Video Swin (11)"]
+        SLT["Sign Language Transformers (12)"]
+        SUR["Survey (13)"]
+    end
+    MPF --> POSE & HAND & FACE
+    POSE & HAND & FACE --> FEAT["🔢 Features"]
+    FEAT --> MATCH["📏 Matching"]
+    DTW --> MATCH
+    MN & PN --> PROTO["🏆 Your clips as prototypes"]
+    PROTO --> MATCH
+    MATCH --> THIS["⭐ This project:<br/>personal ISL signs"]
+    INC & WL & SAM & VS & SLT & SUR -. "compared / next steps" .-> THIS
+```
+
 ## Methods used directly
 
 | # | Paper | Venue / year | Link | How it is used here |

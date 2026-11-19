@@ -5,6 +5,30 @@ The cut-offs that decide **match / "Was this X?" / not recognized**
 `src/personal_signs/engine.py`) were first set from 16 clips of one signer.
 Before changing them, record several people and measure.
 
+```mermaid
+flowchart LR
+    V["👥 3–5+ volunteers<br/>different hands, light,<br/>left- & right-handed"] --> R["🎬 Each in their own profile<br/>4 signs × 5 clips"]
+    R --> T["📊 personal-signs tune"]
+    T --> Q{"Untaught sign called<br/>a match ≈ 0%<br/>and most signs match?"}
+    Q -- "No" --> C["🔧 Use the suggested<br/>cut-offs, re-test"] --> T
+    Q -- "Yes" --> K["✅ Keep the cut-offs"]
+
+    classDef ok fill:#e6f6ec,stroke:#1d7a46,color:#0f3d23
+    classDef ask fill:#fff4e0,stroke:#a86400,color:#4d2e00
+    class K ok
+    class C ask
+```
+
+### The three tests
+
+```mermaid
+flowchart TD
+    CLIP["One saved clip<br/>of person P, sign S"] --> T1 & T2 & T3
+    T1["👤 same_signer<br/>vs P's other clips"] --> G1["Want: right sign matched"]
+    T2["🚫 unknown_sign<br/>vs P's clips without S"] --> G2["Want: NOT matched<br/>(S was never taught)"]
+    T3["👥 cross_signer<br/>vs everyone else's clips"] --> G3["Shows whether one person's<br/>examples help a new person"]
+```
+
 ## 1. Record
 
 For each volunteer (aim for **at least 5 people**, with different hand sizes,

@@ -1,19 +1,24 @@
 # How it works
 
-```text
-clip (2-3 s, MP4/WebM)
-   │  decode once, pick 16 evenly spaced frames (8 when recognizing)
-   ▼
-MediaPipe per frame ──► 278 numbers: 33 body + 2×21 hand points (x,y,z),
-   │                     52 face-expression scores, face-found flag
-   ▼
-feature sequence (16 × 278)
-   │
-   ├── teaching:   reliability gate ──► saved example, or "check this clip", or rejected
-   │
-   └── recognizing: DTW distance to every saved example
-                    per sign: mean of its 3 closest examples ──► nearest sign + gap to the second
-                    bands ──► match / "Was this X?" / not recognized
+```mermaid
+flowchart TD
+    CLIP["📷 Clip · 2.5 s · MP4 / WebM"] --> DEC["Decode once<br/>pick evenly spaced frames"]
+    DEC --> MP
+
+    subgraph MP["🧍 MediaPipe, on every frame"]
+        direction LR
+        POSE["Body pose<br/>33 points"]
+        HANDS["Left + right hand<br/>2 × 21 points"]
+        FACE["Face expression<br/>52 scores"]
+    end
+
+    MP --> VEC["🔢 278 numbers per frame<br/>(missing parts = 0)"]
+    VEC --> SEQ["Feature sequence<br/>16 × 278 to teach · 8 × 278 to recognize"]
+    SEQ --> TEACH["🛡️ Teach: reliability gate<br/>→ saved / ask first / rejected"]
+    SEQ --> REC["📏 Recognize: DTW to every example<br/>→ match / Was this X? / not recognized"]
+
+    classDef step fill:#eef1ff,stroke:#3a4bd8,color:#1d2040
+    class CLIP,DEC,VEC,SEQ,TEACH,REC step
 ```
 
 ## Features (`src/personal_signs/landmarks.py`)
@@ -45,6 +50,32 @@ by frame, with the same results to 1e-7.
 
 ## Reliability gate (`engine.assess_sample`)
 
+```mermaid
+flowchart TD
+    S["🎬 New example clip"] --> H{"Hands tracked in<br/>at least 60% of frames?"}
+    H -- "No" --> R1["❌ Rejected<br/>keep both hands in frame"]
+    H -- "Yes" --> B{"Body tracked in<br/>at least 60%?"}
+    B -- "No" --> R2["❌ Rejected<br/>step back"]
+    B -- "Yes" --> M{"Enough<br/>movement?"}
+    M -- "No" --> R3["❌ Rejected<br/>make the sign while recording"]
+    M -- "Yes" --> O{"Closer to another<br/>of your signs?"}
+    O -- "Yes" --> W["⚠️ Ask first"]
+    O -- "No" --> V{"Far even from its 3 closest<br/>examples of this sign?"}
+    V -- "Yes, above 0.20" --> W
+    V -- "No" --> D{"Different from the others,<br/>e.g. a new angle?"}
+    D -- "Yes, above 0.09" --> N["✅ Saved<br/>+ note: variety helps"]
+    D -- "No" --> OK["✅ Saved"]
+    W -- "Save anyway" --> OK
+    W -- "Discard" --> X["🗑️ Not saved"]
+
+    classDef ok fill:#e6f6ec,stroke:#1d7a46,color:#0f3d23
+    classDef ask fill:#fff4e0,stroke:#a86400,color:#4d2e00
+    classDef bad fill:#fdeaea,stroke:#b3261e,color:#5c130f
+    class OK,N ok
+    class W ask
+    class R1,R2,R3,X bad
+```
+
 | Check | Result |
 |---|---|
 | Hands tracked in < 60% of frames | **Rejected**: keep both hands in frame |
@@ -67,6 +98,26 @@ leave-one-clip-out check, and, if a seed model exists, compares it with the
 personal model on the same clips.
 
 ## Recognition bands (`engine.predict_user`)
+
+```mermaid
+flowchart TD
+    Q["🤟 Clip to recognize"] --> DIST["📏 DTW distance to<br/>every saved example"]
+    DIST --> SCORE["🏆 Per sign: mean of its<br/>3 closest examples"]
+    SCORE --> HV{"Hands visible in<br/>at least half the frames?"}
+    HV -- "No" --> NR1["❌ Not recognized<br/>hands not visible"]
+    HV -- "Yes" --> A{"Best sign below 0.10<br/>and 0.004 ahead of the next?"}
+    A -- "Yes" --> MATCH["✅ Match"]
+    A -- "No" --> C{"Best sign<br/>below 0.14?"}
+    C -- "Yes" --> ASK["❓ Was this X?"]
+    C -- "No" --> NR2["❌ Not recognized"]
+
+    classDef ok fill:#e6f6ec,stroke:#1d7a46,color:#0f3d23
+    classDef ask fill:#fff4e0,stroke:#a86400,color:#4d2e00
+    classDef bad fill:#fdeaea,stroke:#b3261e,color:#5c130f
+    class MATCH ok
+    class ASK ask
+    class NR1,NR2 bad
+```
 
 | Condition | Answer |
 |---|---|

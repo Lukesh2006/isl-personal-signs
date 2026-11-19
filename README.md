@@ -27,14 +27,76 @@ Everything runs on a normal laptop CPU: about **1.3 s** to save a clip and
 
 ## How it works
 
-```text
-2-3 s clip ─► 16 frames ─► MediaPipe: body (33 pts) + both hands (2×21 pts) + face expression (52)
-                                   │
-                                   ▼
-                         278 numbers per frame
-                                   │
-         teaching ─► reliability gate ─► saved example (or "check this clip" / rejected)
-      recognizing ─► Dynamic Time Warping to your examples ─► match / "Was this X?" / not recognized
+### 1. From a clip to a decision
+
+```mermaid
+flowchart TD
+    A["📷 Camera clip<br/>2.5 s · MP4 / WebM"] --> B["🎞️ Evenly spaced frames<br/>16 to teach · 8 to recognize"]
+    B --> C["🧍 MediaPipe per frame<br/>body 33 pts · hands 2×21 pts<br/>face 52 expression scores"]
+    C --> D["🔢 278 numbers<br/>per frame"]
+    D --> E{"Teach or<br/>recognize?"}
+    E -- "Teach" --> F["🛡️ Reliability gate"]
+    F --> G[("💾 Your examples")]
+    E -- "Recognize" --> H["📏 Dynamic Time Warping<br/>to every example"]
+    G -.-> H
+    H --> I["🏆 Each sign scored by<br/>its 3 closest examples"]
+    I --> J{"Best sign's<br/>distance"}
+    J -- "below 0.10 and a clear lead" --> K["✅ Match"]
+    J -- "below 0.14" --> L["❓ Was this X?"]
+    J -- "otherwise" --> M["❌ Not recognized"]
+
+    classDef step fill:#eef1ff,stroke:#3a4bd8,color:#1d2040
+    classDef store fill:#f3eaff,stroke:#7b4bd8,color:#1d2040
+    classDef ok fill:#e6f6ec,stroke:#1d7a46,color:#0f3d23
+    classDef ask fill:#fff4e0,stroke:#a86400,color:#4d2e00
+    classDef bad fill:#fdeaea,stroke:#b3261e,color:#5c130f
+    class A,B,C,D,F,H,I step
+    class G store
+    class K ok
+    class L ask
+    class M bad
+```
+
+### 2. It keeps learning from your answers
+
+```mermaid
+flowchart TD
+    R["🤟 Make the sign<br/>→ Recognize"] --> Q{"Answer"}
+    Q -- "✅ Match" --> S["Shows the sign"]
+    Q -- "❓ Was this X?" --> Y{"You tap"}
+    Y -- "Yes" --> ADD["➕ Clip saved as a<br/>new example of X"]
+    Y -- "No" --> PICK["Pick the right sign<br/>(or skip)"]
+    Q -- "❌ Not recognized" --> PICK
+    PICK --> ADD
+    ADD --> T["🔁 Retrained automatically"]
+    T --> R
+
+    classDef ok fill:#e6f6ec,stroke:#1d7a46,color:#0f3d23
+    classDef ask fill:#fff4e0,stroke:#a86400,color:#4d2e00
+    classDef step fill:#eef1ff,stroke:#3a4bd8,color:#1d2040
+    class S ok
+    class Y,PICK ask
+    class R,ADD,T step
+```
+
+### 3. Where it runs
+
+```mermaid
+flowchart LR
+    subgraph Browsers["🖥️ Any browser"]
+        L["💻 Laptop"]
+        P["📱 Phone"]
+    end
+    W["🌐 signbridgeco.xyz/signs<br/>or the engine's own page"]
+    L --> W
+    P --> W
+    subgraph Engine["🧠 Recognition engine · FastAPI"]
+        E["personal-signs serve<br/>localhost:8000"] --> DATA[("📁 data/<br/>clips · models")]
+    end
+    W -- "same device" --> E
+    P -. "USB cable<br/>(adb reverse)" .-> E
+    T["☁️ Cloudflare Tunnel<br/>signs.signbridgeco.xyz"] -. "free hosting on<br/>an Ubuntu laptop" .-> E
+    W -. "from anywhere" .-> T
 ```
 
 - **Features:** per frame, 33 body points, 21 points per hand (in fixed
@@ -109,6 +171,11 @@ Headers: `X-User: <profile>` picks the user (default `default`). When
 
 Run it on a spare Ubuntu laptop behind a free Cloudflare Tunnel, with no
 router ports and no paid hosting: [docs/self-hosting-ubuntu.md](docs/self-hosting-ubuntu.md).
+
+```mermaid
+flowchart LR
+    A["1️⃣ Laptop never sleeps"] --> B["2️⃣ sudo bash<br/>install.sh"] --> C["3️⃣ Domain on<br/>Cloudflare (free)"] --> D["4️⃣ cloudflared<br/>tunnel"] --> E["✅ https://signs.<br/>signbridgeco.xyz"]
+```
 
 ```bash
 sudo bash deploy/ubuntu/install.sh

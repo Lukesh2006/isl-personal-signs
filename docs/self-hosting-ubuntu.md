@@ -4,9 +4,30 @@ Run the server on a spare Ubuntu / Linux Mint laptop and make it reachable at
 `https://signs.signbridgeco.xyz` through a free Cloudflare Tunnel. No router
 ports are opened and no static IP is needed.
 
-```text
-Browser / app ──HTTPS──▶ Cloudflare (free) ──Tunnel──▶ Ubuntu laptop: 127.0.0.1:8000
-                                                        └─ /var/lib/personal-signs (clips, models)
+```mermaid
+flowchart LR
+    U["📱💻 Any browser<br/>signbridgeco.xyz/signs"] -- "HTTPS" --> CF["☁️ Cloudflare<br/>free plan"]
+    CF -- "Tunnel<br/>no open ports" --> UB["🐧 Ubuntu laptop<br/>127.0.0.1:8000"]
+    UB --> D[("📁 /var/lib/personal-signs<br/>clips · models")]
+    K["🔑 API key<br/>/etc/personal-signs"] -.-> UB
+```
+
+### The whole setup at a glance
+
+```mermaid
+flowchart TD
+    A["1️⃣ Prepare the laptop<br/>updates · never sleep · plugged in"] --> B["2️⃣ Install the server<br/>git clone · sudo bash install.sh"]
+    B --> C{"curl 127.0.0.1:8000/health<br/>says ok?"}
+    C -- "No" --> L["Check logs<br/>journalctl -u personal-signs"] --> B
+    C -- "Yes" --> D["3️⃣ Domain on Cloudflare<br/>change nameservers at the registrar"]
+    D --> E["4️⃣ Create the tunnel<br/>cloudflared tunnel create + route dns"]
+    E --> F["5️⃣ Run it as a service<br/>cloudflared service install"]
+    F --> G["✅ https://signs.signbridgeco.xyz/health<br/>then set it as Engine address"]
+
+    classDef ok fill:#e6f6ec,stroke:#1d7a46,color:#0f3d23
+    classDef step fill:#eef1ff,stroke:#3a4bd8,color:#1d2040
+    class A,B,D,E,F step
+    class G ok
 ```
 
 ## 1. Prepare the laptop
