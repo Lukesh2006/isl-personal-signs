@@ -68,7 +68,8 @@ SEED_KIND = "isl"
 MIN_HANDS_RATIO = 0.6
 MIN_BODY_RATIO = 0.6
 MIN_MOTION = 0.012
-CONSISTENCY_MAX = 0.09
+CONSISTENCY_MAX = 0.09  # above this a clip is saved with a "differs from the others" note
+VERY_DIFFERENT_MAX = 0.20  # above this (to its closest examples) a clip needs the user's OK
 CONFUSION_MARGIN = 0.01
 FIRST_CLIP_CONFUSION_MAX = 0.05
 
@@ -78,6 +79,10 @@ ACCEPT_GAP = 0.004
 CONFIRM_DISTANCE = 0.14
 PREDICT_MIN_HANDS_RATIO = 0.5
 PREDICT_FRAMES = 8  # fewer frames keep live recognition responsive
+# A sign's score is the mean distance to its few closest examples. Averaging
+# over all examples penalized signs taught with many varied clips (different
+# cameras, distances), so the more a sign was taught, the worse it scored.
+NEAREST_EXAMPLES = 3
 
 # Building the three MediaPipe detectors takes seconds, so each worker thread
 # builds its own set once and keeps it (detectors are not thread-safe). The
@@ -372,6 +377,11 @@ def sequence_distance(first: np.ndarray, second: np.ndarray) -> float:
     return previous[columns] / max(rows + columns, 1)
 
 
+def sign_score(distances: list[float]) -> float:
+    """One distance per sign: the mean of its NEAREST_EXAMPLES closest examples."""
+    return float(np.mean(sorted(distances)[:NEAREST_EXAMPLES]))
+
+
 def _signal_diagnostics(sequence: np.ndarray) -> dict[str, int | float]:
     """Which visual signals MediaPipe found in an analyzed clip."""
     frames = np.asarray(sequence, dtype=np.float32)
@@ -432,28 +442,41 @@ def assess_sample(
     if rejections:
         return {"decision": "rejected", "reasons": rejections, "checks": checks}
 
-    warnings = []
-    own_distance = None
+    # Warnings need the user's OK before saving; notes are only shown.
+    # Recording the same sign from new angles or distances is encouraged
+    # (recognition uses a sign's closest examples), so that alone is a note.
+    warnings: list[str] = []
+    notes: list[str] = []
+    own_score = None
     if same_label:
-        own_distance = float(np.median([sequence_distance(query, example) for example in same_label]))
-        checks["own_median_distance"] = round(own_distance, 4)
-        if own_distance > CONSISTENCY_MAX:
-            warnings.append("This clip is quite different from your other examples of this sign.")
+        own_distances = [sequence_distance(query, example) for example in same_label]
+        own_median = float(np.median(own_distances))
+        own_score = sign_score(own_distances)
+        checks["own_median_distance"] = round(own_median, 4)
+        checks["own_nearest_distance"] = round(own_score, 4)
+        if own_score > VERY_DIFFERENT_MAX:
+            warnings.append(
+                "This clip is very different from all your examples of this sign. Was it the right sign?"
+            )
+        elif own_median > CONSISTENCY_MAX:
+            notes.append("This one differs from your other examples (new angle or distance). That's good: variety helps.")
     if other_labels:
         nearest_distance, nearest_label = min(
-            (float(np.mean([sequence_distance(query, example) for example in examples])), label)
+            (sign_score([sequence_distance(query, example) for example in examples]), label)
             for label, examples in other_labels.items()
         )
         checks["nearest_other_label"] = nearest_label
         checks["nearest_other_distance"] = round(nearest_distance, 4)
         readable = nearest_label.replace("_", " ").upper()
-        if own_distance is not None:
-            if nearest_distance + CONFUSION_MARGIN < own_distance:
+        if own_score is not None:
+            if nearest_distance + CONFUSION_MARGIN < own_score:
                 warnings.append(f"This clip looks more like your {readable} examples than this sign.")
         elif nearest_distance < FIRST_CLIP_CONFUSION_MAX:
             warnings.append(f"This clip looks very similar to your {readable} examples.")
 
-    return {"decision": "needs_confirmation" if warnings else "accepted", "reasons": warnings, "checks": checks}
+    if warnings:
+        return {"decision": "needs_confirmation", "reasons": warnings, "checks": checks}
+    return {"decision": "accepted", "reasons": notes, "checks": checks}
 
 
 def save_sample(user_id: str, label: str, video_bytes: bytes, kind: str | None = None, confirm: bool = False) -> dict:
@@ -687,7 +710,9 @@ def predict_user(user_id: str, video_bytes: bytes) -> dict:
     if not personal:
         model_path = SEED_MODEL_PATH
     if not model_path.exists():
-        raise ValueError("No sign model yet. Add labeled clips and train first.")
+        raise ValueError(
+            "Nothing to recognize with yet. Save at least 3 examples of 2 different signs, then press Train."
+        )
     # DTW aligns this shorter query with the 16-frame examples.
     sequence = np.asarray(extract_sequence(video_bytes, frame_count=PREDICT_FRAMES), dtype=np.float32)
     model = json.loads(model_path.read_text(encoding="utf-8"))
@@ -697,7 +722,7 @@ def predict_user(user_id: str, video_bytes: bytes) -> dict:
         distances.setdefault(item["label"], []).append(
             sequence_distance(sequence, np.asarray(item["sequence"], dtype=np.float32))
         )
-    ranked = sorted((float(np.mean(values)), label) for label, values in distances.items())
+    ranked = sorted((sign_score(values), label) for label, values in distances.items())
     signals = _signal_diagnostics(sequence)
     if not ranked:
         return {
@@ -718,6 +743,14 @@ def predict_user(user_id: str, video_bytes: bytes) -> dict:
     else:
         decision, reason = "rejected", "Uncertain; please repeat or add more examples."
     accepted = decision == "accepted"
+    logger.info(
+        "recognize user=%s decision=%s ranking=%s hands=%s/%s frames",
+        _safe_uid(user_id),
+        decision,
+        ", ".join(f"{label}={distance:.3f}" for distance, label in ranked[:3]),
+        signals["hands_frames"],
+        signals["frames_analyzed"],
+    )
     return {
         "label": best_label if accepted else "",
         "suggestion": best_label,
@@ -727,5 +760,7 @@ def predict_user(user_id: str, video_bytes: bytes) -> dict:
         "kind": kinds.get(best_label, DEFAULT_KIND if personal else SEED_KIND),
         "model": "personal" if personal else "seed",
         "reason": reason,
+        # The three closest signs, so the user can see why it decided.
+        "ranking": [{"label": label, "distance": round(distance, 4)} for distance, label in ranked[:3]],
         "signals": signals,
     }

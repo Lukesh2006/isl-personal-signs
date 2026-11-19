@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -36,6 +37,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Personal ISL sign recognition", version=__version__, lifespan=lifespan)
+
+# Websites allowed to use this server from the browser (comma-separated).
+# allow_private_network lets a public site (e.g. signbridgeco.xyz) reach a
+# server running on the visitor's own device (localhost), which Chrome
+# otherwise blocks.
+ALLOWED_ORIGINS_ENV = "PERSONAL_SIGNS_ALLOWED_ORIGINS"
+DEFAULT_ALLOWED_ORIGINS = "https://signbridgeco.xyz,https://www.signbridgeco.xyz"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get(ALLOWED_ORIGINS_ENV, DEFAULT_ALLOWED_ORIGINS).split(",")
+        if origin.strip()
+    ],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "X-User", "Content-Type"],
+    allow_private_network=True,
+)
 
 
 def _user(authorization: str | None, x_user: str | None) -> str:
@@ -110,6 +129,11 @@ async def train(authorization: str | None = Header(None), x_user: str | None = H
     user = _user(authorization, x_user)
     if engine.list_samples(user):
         return await _call(engine.train_user, user)
+    if not engine.SEED_ROOT.is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail="No examples saved yet. Save at least 3 examples of 2 different signs, then press Train.",
+        )
     return await _call(engine.train_seed_model)
 
 

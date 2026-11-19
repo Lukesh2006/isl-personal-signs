@@ -56,6 +56,13 @@ class ApiTests(unittest.TestCase):
         result = self.client.post("/recognize", content=self.clip()).json()
         self.assertEqual(result["decision"], "accepted")
         self.assertEqual(result["label"], "hello")
+        self.assertEqual([r["label"] for r in result["ranking"]], ["hello", "thanks"])
+        self.assertLess(result["ranking"][0]["distance"], result["ranking"][1]["distance"])
+
+        # Answering "yes" to a question saves that clip as a new example of the sign.
+        confirmed = self.client.post("/signs/hello?confirm=true", content=self.clip()).json()
+        self.assertTrue(confirmed["saved"])
+        self.assertEqual(confirmed["kind"], "isl_variant")  # an existing sign keeps its type
 
     def test_users_are_kept_apart(self):
         self.client.post("/signs/hello", content=self.clip(), headers={"X-User": "asha"})
@@ -67,6 +74,22 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.post("/signs/hello", content=b"").status_code, 400)
         self.assertEqual(self.client.delete("/signs/hello/123").status_code, 404)
         self.assertEqual(self.client.post("/recognize", content=self.clip()).status_code, 400)  # nothing trained
+
+    def test_website_may_call_the_local_server(self):
+        preflight = self.client.options(
+            "/signs",
+            headers={
+                "Origin": "https://signbridgeco.xyz",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "x-user",
+                "Access-Control-Request-Private-Network": "true",
+            },
+        )
+        self.assertEqual(preflight.status_code, 200)
+        self.assertEqual(preflight.headers["access-control-allow-origin"], "https://signbridgeco.xyz")
+        self.assertEqual(preflight.headers.get("access-control-allow-private-network"), "true")
+        other = self.client.get("/signs", headers={"Origin": "https://evil.example"})
+        self.assertNotIn("access-control-allow-origin", other.headers)
 
     def test_api_key_is_required_when_set(self):
         with patch.dict(os.environ, {api.API_KEY_ENV: "secret-key"}):

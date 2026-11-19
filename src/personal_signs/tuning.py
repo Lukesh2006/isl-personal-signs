@@ -88,7 +88,7 @@ def _score(test: str, query: Clip, examples: list[Clip]) -> Trial | None:
     distances: dict[str, list[float]] = {}
     for example in examples:
         distances.setdefault(example.label, []).append(engine.sequence_distance(query.query, example.sequence))
-    ranked = sorted((float(np.mean(values)), label) for label, values in distances.items())
+    ranked = sorted((engine.sign_score(values), label) for label, values in distances.items())
     best_distance, best_label = ranked[0]
     signals = engine._signal_diagnostics(query.query)
     hands_ok = signals["hands_frames"] >= engine.PREDICT_MIN_HANDS_RATIO * max(signals["frames_analyzed"], 1)

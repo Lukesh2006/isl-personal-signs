@@ -104,16 +104,26 @@ class SampleGateTests(_GateTestCase):
         self.assertEqual(result["samples_for_sign"], 3)
         self.assertLess(result["checks"]["own_median_distance"], psm.CONSISTENCY_MAX)
 
-    def test_inconsistent_clip_needs_confirmation_then_saves_on_confirm(self):
+    def test_varied_clip_is_saved_with_a_note(self):
+        # Same sign from a new angle: saved straight away, only a note is shown.
         self.save("Hello")
         self.save("Hello")
-        warned = self.save("Hello", offset=0.24)
+        varied = self.save("Hello", offset=0.24)
+        self.assertTrue(varied["saved"])
+        self.assertEqual(varied["decision"], "accepted")
+        self.assertIn("variety helps", varied["reasons"][0])
+        self.assertGreater(varied["checks"]["own_median_distance"], psm.CONSISTENCY_MAX)
+
+    def test_very_different_clip_needs_confirmation_then_saves_on_confirm(self):
+        self.save("Hello")
+        self.save("Hello")
+        warned = self.save("Hello", offset=0.6)
         self.assertEqual(warned["decision"], "needs_confirmation")
         self.assertFalse(warned["saved"])
-        self.assertIn("different", warned["reasons"][0])
+        self.assertIn("very different", warned["reasons"][0])
         self.assertEqual(psm.list_samples("user-1"), {"hello": 2})
 
-        confirmed = self.save("Hello", offset=0.24, confirm=True)
+        confirmed = self.save("Hello", offset=0.6, confirm=True)
         self.assertTrue(confirmed["saved"])
         self.assertEqual(confirmed["decision"], "needs_confirmation")
         self.assertEqual(psm.list_samples("user-1"), {"hello": 3})
@@ -263,6 +273,16 @@ class PredictBandTests(_GateTestCase):
         result = self.predict(hands=False)
         self.assertEqual(result["decision"], "rejected")
         self.assertIn("Hands", result["reason"])
+
+    def test_many_varied_examples_do_not_hide_a_sign(self):
+        # Five extra, far-off "hello" examples (e.g. another camera) must not
+        # drag the close ones down: a sign is scored by its closest examples.
+        model = json.loads(self.model_path().read_text(encoding="utf-8"))
+        model["prototypes"] += [{"label": "hello", "sequence": _sequence(offset=0.5, seed=20 + i)} for i in range(5)]
+        self.model_path().write_text(json.dumps(model), encoding="utf-8")
+        result = self.predict()
+        self.assertEqual(result["decision"], "accepted")
+        self.assertEqual(result["label"], "hello")
 
     def test_custom_gesture_kind_is_reported(self):
         result = self.predict(offset=1.0)
