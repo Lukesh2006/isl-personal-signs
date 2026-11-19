@@ -39,6 +39,7 @@
       <video id="camera" autoplay muted playsinline></video>
       <div class="row">
         <button id="start" class="secondary">Start camera</button>
+        <button id="flip" class="secondary" hidden>Switch camera</button>
       </div>
       <p style="color:var(--muted);font-size:.9rem;margin:10px 0 0">Frame yourself from head to waist with both hands visible. Each recording lasts <span id="seconds">2.5</span> s.</p>
     </section>
@@ -61,10 +62,27 @@
         <button id="saveAnyway">Save anyway</button>
         <button id="discard" class="secondary">Discard</button>
       </div>
+      <div id="answer" hidden>
+        <div class="row">
+          <button id="answerYes">Yes</button>
+          <button id="answerNo" class="secondary">No</button>
+        </div>
+        <div id="correct" hidden>
+          <label for="correctSign">Which sign was it?</label>
+          <select id="correctSign"></select>
+          <div class="row">
+            <button id="saveCorrect">Save as this sign</button>
+            <button id="skipCorrect" class="secondary">Skip</button>
+          </div>
+        </div>
+      </div>
+      <div id="ranking" style="color:var(--muted);font-size:.85rem;margin-top:6px"></div>
       <h3 style="margin:18px 0 4px;font-size:1rem">Saved signs</h3>
       <ul id="signs"><li style="color:var(--muted)">None yet.</li></ul>
       <details>
         <summary>Settings</summary>
+        <label for="server">Engine address (empty = this server)</label>
+        <input id="server" placeholder="http://localhost:8000" autocomplete="off">
         <label for="user">Profile name (X-User)</label>
         <input id="user" value="default" maxlength="64">
         <label for="key">API key (only if the server requires one)</label>
@@ -76,13 +94,25 @@
 <script>
 const RECORD_MS = 2500;
 const $ = (id) => document.getElementById(id);
-let stream = null, pendingClip = null;
+let stream = null;
+let pendingClip = null;        // last recorded example waiting for "Save anyway"
+let lastClip = null;           // last clip sent to Recognize
+let lastSuggestion = "";       // what Recognize thought it was
+let savedSigns = [];           // sign names from the server, for "Which sign was it?"
 
 function store(name, value) { try { localStorage.setItem(name, value); } catch (_) {} }
 function load(name) { try { return localStorage.getItem(name); } catch (_) { return null; } }
 $("user").value = load("ps-user") || "default";
 $("user").addEventListener("change", () => { store("ps-user", $("user").value); refresh(); });
 $("key").addEventListener("change", () => refresh());
+
+// Where the recognition engine runs. Served by the engine itself: same origin.
+// Served by the website: the engine on this device (http://localhost:8000),
+// unless the user sets another address (e.g. a hosted https server).
+const servedByEngine = !location.hostname.endsWith("signbridgeco.xyz");
+$("server").value = load("ps-server") ?? (servedByEngine ? "" : "http://localhost:8000");
+$("server").addEventListener("change", () => { store("ps-server", $("server").value.trim()); refresh(); });
+const serverBase = () => $("server").value.trim().replace(/\/+$/, "");
 
 function headers(extra = {}) {
   const h = { "X-User": $("user").value.trim() || "default", ...extra };
@@ -91,24 +121,72 @@ function headers(extra = {}) {
   return h;
 }
 
+const readable = (label) => (label || "").replaceAll("_", " ").toUpperCase();
 function setStatus(text, tone = "") { $("status").className = tone; $("status").textContent = text; }
 function busy(on) { for (const id of ["record", "train", "recognize"]) $(id).disabled = on || (id !== "train" && !stream); }
 
+// Hide every follow-up question so old buttons never act on a different clip.
+function resetPrompts() {
+  $("confirm").hidden = true;
+  $("answer").hidden = true;
+  $("answerYes").hidden = false;  // a "not recognized" result hides it; always bring it back
+  $("correct").hidden = true;
+  $("ranking").textContent = "";
+  pendingClip = null;
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: headers(options.headers) });
+  let response;
+  try {
+    response = await fetch(serverBase() + path, { ...options, headers: headers(options.headers) });
+  } catch (_) {
+    throw new Error(`Can't reach the recognition engine at ${serverBase() || location.origin}. ` +
+      "Start it on this device (or connect the phone by USB), or set its address under Settings.");
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.detail || response.statusText);
   return data;
 }
 
-$("start").onclick = async () => {
+let facing = "user";  // front camera first; "environment" = back camera
+
+function stopCamera() {
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+  stream = null;
+  $("camera").srcObject = null;
+  busy(false);
+}
+
+async function startCamera() {
+  stopCamera();
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
-    $("camera").srcObject = stream;
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: facing },
+      audio: false,
+    });
+    const video = $("camera");
+    video.srcObject = stream;
+    // Phones do not always start a live preview by themselves.
+    await video.play().catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    if (!video.videoWidth) {
+      stopCamera();
+      setStatus("The camera is not sending a picture. Close other tabs or apps that use the camera, then tap Start camera again.", "bad");
+      return;
+    }
+    $("flip").hidden = false;
     busy(false);
     setStatus("Camera ready.");
-  } catch (error) { setStatus("Camera not available: " + error.message, "bad"); }
-};
+  } catch (error) { stopCamera(); setStatus("Camera not available: " + error.message, "bad"); }
+}
+
+$("start").onclick = startCamera;
+$("flip").onclick = () => { facing = facing === "user" ? "environment" : "user"; startCamera(); };
+
+// Release the camera when this tab is hidden, so another tab or app can use it.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && stream) { stopCamera(); setStatus("Camera paused. Tap Start camera to continue."); }
+});
 
 function recordClip() {
   return new Promise((resolve, reject) => {
@@ -116,7 +194,12 @@ function recordClip() {
     const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
     const chunks = [];
     recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
-    recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType }));
+    recorder.onstop = () => {
+      const clip = new Blob(chunks, { type: recorder.mimeType });
+      // An almost empty file means the camera delivered no frames.
+      if (clip.size < 2000) reject(new Error("The recording is empty. Close other tabs or apps using the camera, then tap Start camera again."));
+      else resolve(clip);
+    };
     recorder.onerror = (event) => reject(event.error);
     recorder.start();
     setTimeout(() => recorder.stop(), RECORD_MS);
@@ -128,15 +211,17 @@ async function countdown() {
   setStatus("Recording… sign now.");
 }
 
-async function upload(clip, confirm) {
-  const label = $("label").value.trim();
-  const query = new URLSearchParams({ kind: $("kind").value, confirm: String(confirm) });
+// Existing signs keep their saved type, so the type is only sent for new signs.
+async function addExample(label, clip, confirm) {
+  const query = new URLSearchParams({ confirm: String(confirm) });
+  if (!savedSigns.includes(label.toLowerCase().replaceAll(" ", "_"))) query.set("kind", $("kind").value);
   return api("/signs/" + encodeURIComponent(label) + "?" + query, { method: "POST", body: clip });
 }
 
 function showGate(result) {
   if (result.saved) {
-    setStatus(`Saved ${result.label} example (${result.samples_for_sign} so far).`, "ok");
+    const note = result.decision === "accepted" && result.reasons.length ? " " + result.reasons.join(" ") : "";
+    setStatus(`Saved ${readable(result.label)} example (${result.samples_for_sign} so far).${note}`, "ok");
   } else if (result.decision === "needs_confirmation") {
     setStatus("Check this example: " + result.reasons.join(" "), "warn");
     $("confirm").hidden = false;
@@ -146,66 +231,120 @@ function showGate(result) {
 }
 
 $("record").onclick = async () => {
-  if (!$("label").value.trim()) { setStatus("Type a sign name first.", "warn"); return; }
-  busy(true); $("confirm").hidden = true;
+  const label = $("label").value.trim();
+  if (!label) { setStatus("Type a sign name first.", "warn"); return; }
+  resetPrompts(); busy(true);
   try {
     await countdown();
-    pendingClip = await recordClip();
+    const clip = await recordClip();
     setStatus("Checking the clip…");
-    showGate(await upload(pendingClip, false));
+    const result = await addExample(label, clip, false);
+    showGate(result);
+    if (result.decision === "needs_confirmation" && !result.saved) pendingClip = { label, clip };
     await refresh();
   } catch (error) { setStatus("Could not save: " + error.message, "bad"); }
   busy(false);
 };
 
 $("saveAnyway").onclick = async () => {
-  $("confirm").hidden = true; busy(true);
-  try { showGate(await upload(pendingClip, true)); await refresh(); }
+  if (!pendingClip) return;
+  const { label, clip } = pendingClip;
+  resetPrompts(); busy(true);
+  try { showGate(await addExample(label, clip, true)); await refresh(); }
   catch (error) { setStatus("Could not save: " + error.message, "bad"); }
-  pendingClip = null; busy(false);
+  busy(false);
 };
-$("discard").onclick = () => { $("confirm").hidden = true; pendingClip = null; setStatus("Discarded."); };
+$("discard").onclick = () => { resetPrompts(); setStatus("Discarded."); };
+
+async function train(quiet = false) {
+  const result = await api("/train", { method: "POST" });
+  const v = result.validation;
+  const check = v ? ` Self-check: ${Math.round(v.accuracy * 100)}% (${v.correct}/${v.total}).` : "";
+  if (!quiet) setStatus(`Ready: ${result.sign_count} signs from ${result.clip_count} clips.${check}`, "ok");
+  return result;
+}
 
 $("train").onclick = async () => {
-  busy(true); setStatus("Training…");
-  try {
-    const result = await api("/train", { method: "POST" });
-    const v = result.validation;
-    const check = v ? ` Leave-one-out check: ${Math.round(v.accuracy * 100)}% (${v.correct}/${v.total}).` : "";
-    setStatus(`Ready: ${result.sign_count} signs from ${result.clip_count} clips.${check}`, "ok");
-  } catch (error) { setStatus("Could not train yet: " + error.message, "bad"); }
+  resetPrompts(); busy(true); setStatus("Training…");
+  try { await train(); } catch (error) { setStatus("Could not train yet: " + error.message, "bad"); }
   busy(false);
 };
 
+function showRanking(result) {
+  const items = (result.ranking || []).map((r) => `${readable(r.label)} ${r.distance.toFixed(3)}`);
+  if (items.length) $("ranking").textContent = "Closest (lower = more alike): " + items.join(" · ") + "   (match < 0.100, ask < 0.140)";
+}
+
 $("recognize").onclick = async () => {
-  busy(true);
+  resetPrompts(); busy(true);
   try {
     await countdown();
     const clip = await recordClip();
     setStatus("Recognizing…");
     const r = await api("/recognize", { method: "POST", body: clip });
-    const name = (r.suggestion || "").replaceAll("_", " ").toUpperCase();
-    if (r.decision === "accepted") setStatus("Recognized: " + name, "ok");
-    else if (r.decision === "confirm") setStatus("Was this " + name + "?", "warn");
-    else setStatus("Not recognized. " + r.reason, "bad");
+    lastClip = clip;
+    lastSuggestion = r.suggestion || "";
+    showRanking(r);
+    if (r.decision === "accepted") {
+      setStatus("Recognized: " + readable(r.suggestion), "ok");
+    } else if (r.decision === "confirm") {
+      setStatus("Was this " + readable(r.suggestion) + "?", "warn");
+      $("answer").hidden = false;
+    } else {
+      setStatus("Not recognized. " + r.reason, "bad");
+      if (savedSigns.length) { fillCorrect(); $("answer").hidden = false; $("answerYes").hidden = true; $("correct").hidden = false; }
+    }
   } catch (error) { setStatus("Could not recognize: " + error.message, "bad"); }
   busy(false);
 };
 
+function fillCorrect() {
+  const select = $("correctSign");
+  select.replaceChildren(...savedSigns.map((name) => {
+    const option = document.createElement("option");
+    option.value = name; option.textContent = readable(name);
+    return option;
+  }));
+  if (savedSigns.includes(lastSuggestion)) select.value = lastSuggestion;
+}
+
+// Teach from the answer: the clip just signed becomes a new example of the
+// right sign, then the model is rebuilt so the next try uses it.
+async function learnFrom(label) {
+  resetPrompts(); $("answerYes").hidden = false; busy(true);
+  try {
+    setStatus("Adding this clip to " + readable(label) + "…");
+    const saved = await addExample(label, lastClip, true);
+    if (!saved.saved) { showGate(saved); busy(false); return; }
+    await train(true);
+    setStatus(`Thanks! Added to ${readable(label)} (${saved.samples_for_sign} examples) and retrained.`, "ok");
+    await refresh();
+  } catch (error) { setStatus("Could not add it: " + error.message, "bad"); }
+  lastClip = null;
+  busy(false);
+}
+
+$("answerYes").onclick = () => learnFrom(lastSuggestion);
+$("answerNo").onclick = () => { fillCorrect(); $("correct").hidden = false; };
+$("saveCorrect").onclick = () => learnFrom($("correctSign").value);
+$("skipCorrect").onclick = () => { resetPrompts(); $("answerYes").hidden = false; lastClip = null; setStatus("Okay, nothing was saved."); };
+
 async function refresh() {
   try {
     const data = await api("/signs");
+    savedSigns = Object.keys(data.samples);
     const list = $("signs");
     list.replaceChildren();
-    const entries = Object.entries(data.samples);
-    if (!entries.length) { const li = document.createElement("li"); li.textContent = "None yet."; li.style.color = "var(--muted)"; list.append(li); }
-    for (const [label, count] of entries) {
+    if (!savedSigns.length) { const li = document.createElement("li"); li.textContent = "None yet."; li.style.color = "var(--muted)"; list.append(li); }
+    for (const [label, count] of Object.entries(data.samples)) {
       const li = document.createElement("li");
       const kind = data.details[label]?.kind === "custom_gesture" ? " (custom)" : "";
       li.textContent = `${label.replaceAll("_", " ")}${kind}: ${count} clip${count === 1 ? "" : "s"}`;
       list.append(li);
     }
-  } catch (_) { /* server unreachable or key needed; status shows on the next action */ }
+  } catch (error) {
+    if (!$("status").textContent) setStatus(error.message, "warn");
+  }
 }
 refresh();
 </script>

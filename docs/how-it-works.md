@@ -12,7 +12,7 @@ feature sequence (16 × 278)
    ├── teaching:   reliability gate ──► saved example, or "check this clip", or rejected
    │
    └── recognizing: DTW distance to every saved example
-                    average per sign ──► nearest sign + gap to the second nearest
+                    per sign: mean of its 3 closest examples ──► nearest sign + gap to the second
                     bands ──► match / "Was this X?" / not recognized
 ```
 
@@ -50,7 +50,8 @@ by frame, with the same results to 1e-7.
 | Hands tracked in < 60% of frames | **Rejected**: keep both hands in frame |
 | Body tracked in < 60% of frames | **Rejected**: step back |
 | Almost no movement (motion < 0.012) | **Rejected**: make the sign while recording |
-| Median distance to your other examples of this sign > 0.09 | **Needs confirmation** |
+| Differs from your other examples of this sign (median > 0.09), e.g. a new angle | **Saved**, with a "variety helps" note |
+| Very different even from its 3 closest examples of this sign (> 0.20) | **Needs confirmation** |
 | Closer to another of your signs than to this one | **Needs confirmation** |
 | First example of a new sign very close (< 0.05) to an existing sign | **Needs confirmation** |
 
@@ -72,6 +73,21 @@ personal model on the same clips.
 | Hands visible, nearest sign < 0.10 and clearly ahead of the second (gap > 0.004) | **Match** |
 | Hands visible, nearest sign < 0.14 | **"Was this X?"** |
 | Otherwise | **Not recognized** (with the reason) |
+
+Each sign's distance is the **mean of its 3 closest examples**, not of all of
+them. Averaging over every example penalized signs taught with many varied
+clips (different cameras, angles, distances): the more a sign was taught, the
+worse it scored. On 24 real clips this raised clear matches from 10 to 15 and
+removed every "not recognized".
+
+The answer also lists the three closest signs with their distances, and the
+server logs every recognition the same way.
+
+### Learning from answers
+
+When the answer is *"Was this X?"*, **Yes** saves that clip as a new example of
+X and retrains; **No** lets the user pick the right sign (or skip). Each answer
+adds an example recorded the way the user really signs.
 
 The cut-offs started from one signer's clips. Measure them on several people
 with `personal-signs tune` before changing them; see

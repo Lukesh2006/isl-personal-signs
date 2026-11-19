@@ -62,7 +62,13 @@ personal-signs serve               # then open http://127.0.0.1:8000
 ```
 
 In the browser: **Start camera** → type a sign name → **Record example** (3+
-times per sign, 2+ signs) → **Train** → **Recognize**.
+times per sign, 2+ signs) → **Train** → **Recognize**. When it asks
+*"Was this X?"*, **Yes** adds that clip to X and retrains, so it keeps learning.
+
+The same page is published at **https://signbridgeco.xyz/signs**. It talks to
+the engine on the visitor's own device (`http://localhost:8000`, also from a
+phone connected by USB) or to a hosted engine set under **Settings → Engine
+address**. Allowed websites are set with `PERSONAL_SIGNS_ALLOWED_ORIGINS`.
 
 ### Command line
 
@@ -97,7 +103,7 @@ Headers: `X-User: <profile>` picks the user (default `default`). When
 |---|---|
 | Real clips, 2 signs × 3 examples | All 6 passed the gate; leave-one-out **83%** (5/6); 2 unseen clips both recognized as **match** |
 | Cut-off study, 1 signer × 4 signs × 16 clips | With the current cut-offs an untaught sign is wrongly accepted **75%** of the time, so more signers are needed before tuning ([details](docs/testing-with-signers.md)) |
-| Automated tests | 34 tests: gate, training, bands, DTW against a reference version, MP4/WebM decoding, API and API key |
+| Automated tests | 37 tests: gate, training, bands, closest-example scoring, DTW against a reference version, MP4/WebM decoding, API, API key and website access |
 
 ## Self-hosting for free
 
@@ -117,7 +123,7 @@ src/personal_signs/
   api.py         FastAPI server + browser demo (static/index.html)
   tuning.py      cut-off measurement across signers
   cli.py         personal-signs command
-tests/           34 offline tests (MediaPipe is simulated)
+tests/           37 offline tests (MediaPipe is simulated)
 deploy/ubuntu/   installer, systemd service, Cloudflare Tunnel config
 docs/            how it works, testing with signers, self-hosting, research
 ```
