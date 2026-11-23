@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily backup of Personal ISL Signs
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

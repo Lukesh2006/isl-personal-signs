@@ -1,0 +1,6 @@
+[Unit]
+Description=Back up Personal ISL Signs accounts and recordings
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/personal-signs-backup

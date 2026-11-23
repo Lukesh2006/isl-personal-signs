@@ -1,0 +1,23 @@
+[Unit]
+Description=PocketBase for Personal ISL Signs (accounts; separate from any other PocketBase)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@PB_NAME@
+Group=@PB_NAME@
+# Localhost only: the Cloudflare Tunnel is the only way in from the internet.
+ExecStart=/opt/@PB_NAME@/pocketbase serve --http 127.0.0.1:@PB_PORT@ --dir /var/lib/@PB_NAME@/pb_data
+Restart=always
+RestartSec=5
+LimitNOFILE=4096
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/@PB_NAME@
+
+[Install]
+WantedBy=multi-user.target

@@ -45,6 +45,25 @@
     </section>
 
     <section class="card">
+      <div id="account" hidden>
+        <div id="loggedOut">
+          <h3 style="margin:0 0 4px;font-size:1rem">Your account</h3>
+          <p style="margin:0;color:var(--muted);font-size:.9rem">Your signs are private to your account.</p>
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="email">
+          <label for="password">Password (at least 8 characters)</label>
+          <input id="password" type="password" autocomplete="current-password" minlength="8">
+          <div class="row">
+            <button id="login">Log in</button>
+            <button id="signup" class="secondary">Sign up</button>
+          </div>
+        </div>
+        <div id="loggedIn" hidden class="row" style="align-items:center;margin-top:0">
+          <span id="who" style="flex:2 1 160px;color:var(--muted)"></span>
+          <button id="logout" class="secondary" style="flex:0 1 110px">Log out</button>
+        </div>
+        <hr style="border:none;border-top:1px solid var(--line);margin:14px 0 4px">
+      </div>
       <label for="label">Sign name</label>
       <input id="label" placeholder="e.g. hello" maxlength="40">
       <label for="kind">Type</label>
@@ -114,7 +133,87 @@ $("server").value = load("ps-server") ?? (servedByEngine ? "" : "http://localhos
 $("server").addEventListener("change", () => { store("ps-server", $("server").value.trim()); refresh(); });
 const serverBase = () => $("server").value.trim().replace(/\/+$/, "");
 
+// Accounts: when the engine says it uses PocketBase, people sign up / log in
+// there and send their login token to the engine.
+let authMode = "none";
+let pocketbaseUrl = "";
+let session = null;  // { token, email }
+try { session = JSON.parse(load("ps-session") || "null"); } catch (_) { session = null; }
+function loggedIn() { return authMode !== "pocketbase" || !!(session && session.token); }
+
+function showAccount() {
+  $("account").hidden = authMode !== "pocketbase";
+  $("loggedOut").hidden = loggedIn();
+  $("loggedIn").hidden = !loggedIn() || authMode !== "pocketbase";
+  $("who").textContent = session ? "Logged in as " + session.email : "";
+  busy(false);
+}
+
+function forgetSession(message) {
+  session = null;
+  store("ps-session", "");
+  showAccount();
+  if (message) setStatus(message, "warn");
+}
+
+async function pocketbase(path, body) {
+  let response;
+  try {
+    response = await fetch(pocketbaseUrl + path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+  } catch (_) { throw new Error("Can't reach the account server. Try again in a moment."); }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const fields = Object.values(data.data || {}).map((f) => f.message).filter(Boolean);
+    throw new Error(fields.join(" ") || data.message || "Request failed.");
+  }
+  return data;
+}
+
+async function logIn(email, password) {
+  const data = await pocketbase("/api/collections/users/auth-with-password", { identity: email, password });
+  session = { token: data.token, email: data.record.email || email };
+  store("ps-session", JSON.stringify(session));
+  $("password").value = "";
+  showAccount();
+  setStatus("Welcome! You're logged in.", "ok");
+  await refresh();
+}
+
+$("login").onclick = async () => {
+  try { await logIn($("email").value.trim(), $("password").value); }
+  catch (error) { setStatus("Could not log in: " + error.message, "bad"); }
+};
+$("signup").onclick = async () => {
+  const email = $("email").value.trim(), password = $("password").value;
+  if (password.length < 8) { setStatus("Use a password with at least 8 characters.", "warn"); return; }
+  try {
+    await pocketbase("/api/collections/users/records", { email, password, passwordConfirm: password });
+    await logIn(email, password);
+  } catch (error) { setStatus("Could not sign up: " + error.message, "bad"); }
+};
+$("logout").onclick = () => { forgetSession(); $("signs").replaceChildren(); setStatus("Logged out."); };
+
+async function loadConfig() {
+  try {
+    const response = await fetch(serverBase() + "/config");
+    const config = await response.json();
+    authMode = config.auth || "none";
+    pocketbaseUrl = (config.pocketbase_url || "").replace(/\/+$/, "");
+  } catch (_) { authMode = "none"; }
+  // Profile names and API keys only apply when there are no accounts.
+  for (const id of ["user", "key"]) {
+    $(id).hidden = authMode === "pocketbase";
+    document.querySelector(`label[for="${id}"]`).hidden = authMode === "pocketbase";
+  }
+  showAccount();
+}
+
 function headers(extra = {}) {
+  if (authMode === "pocketbase") {
+    return session ? { "Authorization": "Bearer " + session.token, ...extra } : { ...extra };
+  }
   const h = { "X-User": $("user").value.trim() || "default", ...extra };
   const key = $("key").value.trim();
   if (key) h["Authorization"] = "Bearer " + key;
@@ -123,7 +222,9 @@ function headers(extra = {}) {
 
 const readable = (label) => (label || "").replaceAll("_", " ").toUpperCase();
 function setStatus(text, tone = "") { $("status").className = tone; $("status").textContent = text; }
-function busy(on) { for (const id of ["record", "train", "recognize"]) $(id).disabled = on || (id !== "train" && !stream); }
+function busy(on) {
+  for (const id of ["record", "train", "recognize"]) $(id).disabled = on || !loggedIn() || (id !== "train" && !stream);
+}
 
 // Hide every follow-up question so old buttons never act on a different clip.
 function resetPrompts() {
@@ -144,6 +245,10 @@ async function api(path, options = {}) {
       "Start it on this device (or connect the phone by USB), or set its address under Settings.");
   }
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401 && authMode === "pocketbase") {
+    forgetSession();
+    throw new Error(data.detail || "Please log in again.");
+  }
   if (!response.ok) throw new Error(data.detail || response.statusText);
   return data;
 }
@@ -346,7 +451,7 @@ async function refresh() {
     if (!$("status").textContent) setStatus(error.message, "warn");
   }
 }
-refresh();
+loadConfig().then(() => { if (loggedIn()) refresh(); else setStatus("Log in or sign up to start teaching your signs."); });
 </script>
 </body>
 </html>

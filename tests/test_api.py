@@ -1,5 +1,6 @@
 """Web API tests. MediaPipe never runs: feature extraction is replaced."""
 
+import json
 import os
 import tempfile
 import unittest
@@ -26,10 +27,11 @@ class ApiTests(unittest.TestCase):
             patch.object(engine, "SEED_MODEL_PATH", root / "personal_models" / "seed.json"),
             patch.object(engine, "SEED_ROOT", root / "training_samples" / "seed"),
             patch.object(engine, "extract_sequence", side_effect=lambda data, frame_count=16: self.clips[data]),
-            patch.dict(os.environ, {api.API_KEY_ENV: ""}),
+            patch.dict(os.environ, {api.API_KEY_ENV: "", api.POCKETBASE_URL_ENV: ""}),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+        api._token_cache.clear()
         self.client = TestClient(api.app)
 
     def clip(self, **kwargs) -> bytes:
@@ -98,6 +100,84 @@ class ApiTests(unittest.TestCase):
             ok = self.client.get("/signs", headers={"Authorization": "Bearer secret-key"})
             self.assertEqual(ok.status_code, 200)
             self.assertEqual(self.client.get("/health").status_code, 200)  # health stays public
+
+    def test_config_reports_local_mode(self):
+        self.assertEqual(self.client.get("/config").json(), {"auth": "none"})
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self.body = body
+
+    def read(self, *args):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class PocketBaseAccountTests(unittest.TestCase):
+    """Account mode: logins are checked with PocketBase (simulated here)."""
+
+    ACCOUNTS = {"token-asha": "asha0000000001", "token-ravi": "ravi0000000002"}
+    clip = ApiTests.clip
+
+    def setUp(self):
+        ApiTests.setUp(self)
+        self.checks = []
+        for patcher in (
+            patch.dict(os.environ, {
+                api.POCKETBASE_URL_ENV: "http://pb.test",
+                api.POCKETBASE_PUBLIC_URL_ENV: "https://db.example.test",
+            }),
+            patch.object(api.urllib.request, "urlopen", side_effect=self._pocketbase),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _pocketbase(self, request, timeout=None):
+        self.checks.append(request.full_url)
+        token = request.get_header("Authorization")
+        if token not in self.ACCOUNTS:
+            raise api.urllib.error.HTTPError(request.full_url, 401, "Unauthorized", None, None)
+        return _FakeResponse(json.dumps({"token": token, "record": {"id": self.ACCOUNTS[token]}}).encode())
+
+    def as_(self, token):
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_config_tells_the_page_where_to_log_in(self):
+        self.assertEqual(
+            self.client.get("/config").json(), {"auth": "pocketbase", "pocketbase_url": "https://db.example.test"}
+        )
+
+    def test_login_is_required(self):
+        response = self.client.get("/signs")
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("log in", response.json()["detail"])
+        self.assertEqual(self.client.get("/signs", headers=self.as_("stolen")).status_code, 401)
+
+    def test_each_account_has_its_own_signs(self):
+        self.assertTrue(self.client.post("/signs/hello", content=self.clip(), headers=self.as_("token-asha")).json()["saved"])
+        self.assertEqual(self.client.get("/signs", headers=self.as_("token-asha")).json()["samples"], {"hello": 1})
+        self.assertEqual(self.client.get("/signs", headers=self.as_("token-ravi")).json()["samples"], {})
+        # The X-User header cannot be used to reach another account's signs.
+        sneaky = self.client.get("/signs", headers={**self.as_("token-ravi"), "X-User": "asha0000000001"})
+        self.assertEqual(sneaky.json()["samples"], {})
+        self.assertTrue((engine.SAMPLE_ROOT / "asha0000000001" / "hello").is_dir())
+
+    def test_checked_logins_are_cached_briefly(self):
+        for _ in range(3):
+            self.client.get("/signs", headers=self.as_("token-asha"))
+        self.assertEqual(len(self.checks), 1)
+        self.assertTrue(self.checks[0].endswith("/api/collections/users/auth-refresh"))
+
+    def test_account_server_down_gives_503(self):
+        with patch.object(api.urllib.request, "urlopen", side_effect=api.urllib.error.URLError("refused")):
+            response = self.client.get("/signs", headers=self.as_("token-new"))
+        self.assertEqual(response.status_code, 503)
 
 
 if __name__ == "__main__":
