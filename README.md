@@ -193,6 +193,7 @@ src/personal_signs/
 tests/           37 offline tests (MediaPipe is simulated)
 deploy/ubuntu/   installer, systemd service, Cloudflare Tunnel config
 docs/            how it works, testing with signers, self-hosting, research
+samples/         small standalone code samples (server endpoints, frames, browser recording)
 ```
 
 ## Roadmap
