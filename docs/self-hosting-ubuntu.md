@@ -94,12 +94,12 @@ registrar's nameservers to the two Cloudflare shows. Keep website records
 
 **Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared**, name it
 `signbridge`. On the install page, copy the long token from the command shown, but
-**do not run that command**. Then add two public hostnames:
+**do not run that command**. Then add two public hostnames (use `127.0.0.1`, not `localhost`: cloudflared may try IPv6 `::1`, where these services do not listen):
 
 | Subdomain | Domain | Service |
 |---|---|---|
-| `signs` | `signbridgeco.xyz` | `HTTP` · `localhost:8000` |
-| `db` | `signbridgeco.xyz` | `HTTP` · `localhost:8092` |
+| `signs` | `signbridgeco.xyz` | `HTTP` · `127.0.0.1:8000` |
+| `db` | `signbridgeco.xyz` | `HTTP` · `127.0.0.1:8092` |
 
 ## 5. Connect it
 
