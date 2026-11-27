@@ -18,6 +18,8 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/@PB_NAME@
+# Never able to see another project's tunnel settings.
+InaccessiblePaths=-/etc/cloudflared -/usr/local/etc/cloudflared
 
 [Install]
 WantedBy=multi-user.target

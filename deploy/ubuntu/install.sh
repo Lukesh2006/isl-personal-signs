@@ -42,13 +42,35 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# Proof that nothing else is touched: remember every OTHER running service and its
+# process id now, and report at the end if any of them was restarted or stopped.
+other_services() {
+  systemctl list-units --type=service --state=running --no-legend --plain 2>/dev/null \
+    | awk '{print $1}' | { grep -v '^personal-signs' || true; } \
+    | while read -r unit; do echo "$unit $(systemctl show -p MainPID --value "$unit")"; done | sort
+}
+others_before="$(other_services)"
+report_others() {
+  local changed
+  changed="$(comm -23 <(printf '%s\n' "$others_before") <(other_services) | awk '{print $1}')"
+  echo
+  if [ -z "$changed" ]; then
+    echo "Other services on this machine: none restarted or stopped (untouched)."
+  else
+    echo "WARNING - these other services restarted or stopped while installing:" >&2
+    printf '  %s\n' $changed >&2
+  fi
+}
+trap report_others EXIT
+
 echo "==> Checking ports ($ENGINE_PORT engine, $PB_PORT accounts)"
 check_port "$ENGINE_PORT" personal-signs
 check_port "$PB_PORT" "$PB_NAME"
 
 echo "==> System packages"
 apt-get update -qq
-apt-get install -y -qq git python3 python3-venv curl unzip openssl iproute2 libgl1 libglib2.0-0 >/dev/null
+# --no-upgrade: install only what is missing; never upgrade packages other programs use.
+apt-get install -y -qq --no-upgrade git python3 python3-venv curl unzip openssl iproute2 libgl1 libglib2.0-0 >/dev/null
 
 echo "==> Service users"
 id personal-signs >/dev/null 2>&1 || useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin personal-signs
@@ -145,5 +167,6 @@ cat <<EOF
 Next:
   1. Create the admin for THIS PocketBase (your own email and a strong password):
        sudo -u $PB_NAME $PB_DIR/pocketbase superuser upsert YOUR_EMAIL 'YOUR_PASSWORD' --dir $PB_DATA/pb_data
-  2. Set up the Cloudflare Tunnel (docs/self-hosting-ubuntu.md, step 3).
+  2. Connect this project's own tunnel: sudo bash $APP_DIR/deploy/ubuntu/setup-tunnel.sh
+     (docs/self-hosting-ubuntu.md, steps 4-5). Never use 'cloudflared service install'.
 EOF

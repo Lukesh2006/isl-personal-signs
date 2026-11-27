@@ -42,13 +42,23 @@ same laptop (its own PocketBase, its own `cloudflared` service and
 | This project | Name / place |
 |---|---|
 | Services | `personal-signs`, `personal-signs-pocketbase`, `personal-signs-tunnel`, `personal-signs-backup.timer` |
-| Code | `/opt/personal-signs`, `/opt/personal-signs-pocketbase` |
+| Code | `/opt/personal-signs`, `/opt/personal-signs-pocketbase`, `/opt/personal-signs-tunnel` (its own checksum-verified cloudflared; the machine's cloudflared is never used or updated) |
 | Data | `/var/lib/personal-signs`, `/var/lib/personal-signs-pocketbase` |
 | Settings | `/etc/personal-signs` (the tunnel uses its own empty `cloudflared.yml` here) |
 | Ports | engine 8000, PocketBase 8092 (choose with `PB_PORT`) |
 
 Never run `cloudflared service install` or `cloudflared tunnel login` for this
 project: both would use the machine-wide cloudflared files of another project.
+
+Extra safety built in:
+- Our services cannot even see `/etc/cloudflared` or any home folder (`~/.cloudflared`).
+- `apt-get install --no-upgrade`: only missing packages are added; nothing another
+  program uses is upgraded.
+- `install.sh` and `setup-tunnel.sh` end by reporting whether any **other** running
+  service was restarted or stopped; the expected line is
+  "Other services on this machine: none restarted or stopped (untouched)."
+- `setup-tunnel.sh` shows the tunnel ID inside the token and waits for `yes`, so a
+  token from another project's tunnel is not used by mistake.
 
 ## 1. Prepare the laptop
 
