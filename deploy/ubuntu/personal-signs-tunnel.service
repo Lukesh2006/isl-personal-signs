@@ -1,0 +1,25 @@
+[Unit]
+Description=Cloudflare Tunnel for Personal ISL Signs (its own tunnel, separate from any other)
+After=network-online.target personal-signs.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=personal-signs
+Group=personal-signs
+# TUNNEL_TOKEN=... (written by setup-tunnel.sh, readable only by root and this service)
+EnvironmentFile=/etc/personal-signs/tunnel.env
+# --config points at an EMPTY file on purpose: cloudflared must never pick up another
+# project's default config (/etc/cloudflared or ~/.cloudflared). Hostnames are set in
+# the Cloudflare dashboard for this tunnel only.
+ExecStart=@CLOUDFLARED@ --config /etc/personal-signs/cloudflared.yml --no-autoupdate tunnel run
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

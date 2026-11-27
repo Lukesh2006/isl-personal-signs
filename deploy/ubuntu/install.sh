@@ -21,7 +21,7 @@ PB_VERSION=0.40.6
 PB_NAME=personal-signs-pocketbase
 PB_DIR=/opt/$PB_NAME
 PB_DATA=/var/lib/$PB_NAME
-PB_PORT="${PB_PORT:-8091}"
+PB_PORT="${PB_PORT:-8092}"
 ENGINE_PORT=8000
 PB_PUBLIC_URL="${PB_PUBLIC_URL:-https://db.signbridgeco.xyz}"
 

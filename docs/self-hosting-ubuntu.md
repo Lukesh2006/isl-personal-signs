@@ -1,28 +1,31 @@
 # Self-hosting on an Ubuntu laptop (free)
 
 Run the server on a spare Ubuntu / Linux Mint laptop and make it reachable at
-`https://signs.signbridgeco.xyz` through a free Cloudflare Tunnel. No router
-ports are opened and no static IP is needed.
+`https://signs.signbridgeco.xyz` (training site) and `https://db.signbridgeco.xyz`
+(accounts) through a free Cloudflare Tunnel. No router ports are opened and no
+static IP is needed.
 
 ```mermaid
 flowchart LR
-    U["📱💻 Any browser<br/>signbridgeco.xyz/signs"] -- "HTTPS" --> CF["☁️ Cloudflare<br/>free plan"]
-    CF -- "Tunnel<br/>no open ports" --> UB["🐧 Ubuntu laptop<br/>127.0.0.1:8000"]
-    UB --> D[("📁 /var/lib/personal-signs<br/>clips · models")]
-    K["🔑 API key<br/>/etc/personal-signs"] -.-> UB
+    U["📱💻 Any browser"] -- "HTTPS" --> CF["☁️ Cloudflare<br/>free plan"]
+    CF -- "own tunnel<br/>no open ports" --> T["🔌 personal-signs-tunnel"]
+    T --> E["🧠 Engine<br/>127.0.0.1:8000"]
+    T --> P["🔑 PocketBase<br/>127.0.0.1:8092"]
+    E --> D[("📁 /var/lib/personal-signs<br/>clips · models · team-clips")]
+    E -. "checks logins" .-> P
 ```
 
 ### The whole setup at a glance
 
 ```mermaid
 flowchart TD
-    A["1️⃣ Prepare the laptop<br/>updates · never sleep · plugged in"] --> B["2️⃣ Install the server<br/>git clone · sudo bash install.sh"]
-    B --> C{"curl 127.0.0.1:8000/health<br/>says ok?"}
-    C -- "No" --> L["Check logs<br/>journalctl -u personal-signs"] --> B
-    C -- "Yes" --> D["3️⃣ Domain on Cloudflare<br/>change nameservers at the registrar"]
-    D --> E["4️⃣ Create the tunnel<br/>cloudflared tunnel create + route dns"]
-    E --> F["5️⃣ Run it as a service<br/>cloudflared service install"]
-    F --> G["✅ https://signs.signbridgeco.xyz/health<br/>then set it as Engine address"]
+    A["1️⃣ Prepare the laptop<br/>never sleep · plugged in"] --> B["2️⃣ Install<br/>sudo PB_PORT=8092 bash install.sh"]
+    B --> C{"engine and PocketBase<br/>say yes?"}
+    C -- "No" --> L["journalctl -u personal-signs<br/>journalctl -u personal-signs-pocketbase"] --> B
+    C -- "Yes" --> D["3️⃣ Domain on Cloudflare<br/>nameservers changed at the registrar"]
+    D --> E["4️⃣ Dashboard: create a tunnel<br/>add signs. and db. hostnames"]
+    E --> F["5️⃣ sudo bash setup-tunnel.sh<br/>paste the token"]
+    F --> G["✅ https://signs.signbridgeco.xyz"]
 
     classDef ok fill:#e6f6ec,stroke:#1d7a46,color:#0f3d23
     classDef step fill:#eef1ff,stroke:#3a4bd8,color:#1d2040
@@ -30,76 +33,87 @@ flowchart TD
     class G ok
 ```
 
+## Sharing the machine with other projects
+
+Everything here has its own names, folders and port, so another project on the
+same laptop (its own PocketBase, its own `cloudflared` service and
+`/etc/cloudflared` config) is **never read, changed or restarted**:
+
+| This project | Name / place |
+|---|---|
+| Services | `personal-signs`, `personal-signs-pocketbase`, `personal-signs-tunnel`, `personal-signs-backup.timer` |
+| Code | `/opt/personal-signs`, `/opt/personal-signs-pocketbase` |
+| Data | `/var/lib/personal-signs`, `/var/lib/personal-signs-pocketbase` |
+| Settings | `/etc/personal-signs` (the tunnel uses its own empty `cloudflared.yml` here) |
+| Ports | engine 8000, PocketBase 8092 (choose with `PB_PORT`) |
+
+Never run `cloudflared service install` or `cloudflared tunnel login` for this
+project: both would use the machine-wide cloudflared files of another project.
+
 ## 1. Prepare the laptop
 
-1. `sudo apt update && sudo apt upgrade -y`
-2. Stop it from sleeping (Cinnamon: **System Settings → Power Management**):
+1. Stop it from sleeping (Cinnamon: **System Settings → Power Management**):
    *Suspend when inactive* → **Never** (on AC power); *When the lid is closed* → **Do nothing**.
-3. Keep it plugged in, ideally on a cable network.
+2. Keep it plugged in, ideally on a cable network.
 
 ## 2. Install the server
 
 ```bash
 sudo apt install -y git
 git clone https://github.com/Lukesh2006/isl-personal-signs.git ~/isl-personal-signs
-sudo bash ~/isl-personal-signs/deploy/ubuntu/install.sh
+sudo PB_PORT=8092 bash ~/isl-personal-signs/deploy/ubuntu/install.sh
 ```
 
-This installs the code to `/opt/personal-signs`, downloads the MediaPipe model
-files, creates a `personal-signs` service user, generates an **API key** in
-`/etc/personal-signs/personal-signs.env`, and starts a service that also starts
-after every reboot. Check it:
+The installer stops without changing anything if a port is already used by another
+program. It installs the engine and this project's own PocketBase, starts both after
+every reboot, and keeps a daily backup. Then create the PocketBase admin (choose a
+strong password):
 
 ```bash
-curl http://127.0.0.1:8000/health
-sudo grep API_KEY /etc/personal-signs/personal-signs.env   # the key clients must send
+sudo -u personal-signs-pocketbase /opt/personal-signs-pocketbase/pocketbase \
+  superuser upsert YOUR_EMAIL 'YOUR_PASSWORD' --dir /var/lib/personal-signs-pocketbase/pb_data
 ```
 
-## 3. Cloudflare Tunnel
+## 3. Domain on Cloudflare
 
-The domain's DNS must be on Cloudflare (free plan): add the domain at
-<https://dash.cloudflare.com>, then change the registrar's nameservers to the
-two Cloudflare shows. Keep website records "DNS only" if the site is hosted
-elsewhere (for example on Vercel).
+Add the domain at <https://dash.cloudflare.com> (free plan) and change the
+registrar's nameservers to the two Cloudflare shows. Keep website records
+**DNS only** if the site is hosted elsewhere (for example on Vercel).
+
+## 4. Create this project's tunnel (dashboard)
+
+**Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared**, name it
+`signbridge`. On the install page, copy the long token from the command shown, but
+**do not run that command**. Then add two public hostnames:
+
+| Subdomain | Domain | Service |
+|---|---|---|
+| `signs` | `signbridgeco.xyz` | `HTTP` · `localhost:8000` |
+| `db` | `signbridgeco.xyz` | `HTTP` · `localhost:8092` |
+
+## 5. Connect it
 
 ```bash
-# Install cloudflared from Cloudflare's package repository
-sudo mkdir -p --mode=0755 /usr/share/keyrings
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' | sudo tee /etc/apt/sources.list.d/cloudflared.list
-sudo apt update && sudo apt install -y cloudflared
-
-# Log in (browser opens), create the tunnel and its DNS name
-cloudflared tunnel login
-cloudflared tunnel create personal-signs          # prints the TUNNEL_ID
-cloudflared tunnel route dns personal-signs signs.signbridgeco.xyz
-
-# Run it as a service
-sudo mkdir -p /etc/cloudflared
-sudo cp ~/.cloudflared/<TUNNEL_ID>.json /etc/cloudflared/
-sudo cp /opt/personal-signs/deploy/ubuntu/cloudflared-config.yml.example /etc/cloudflared/config.yml
-sudo nano /etc/cloudflared/config.yml             # replace TUNNEL_ID in both places
-sudo cloudflared service install
-sudo systemctl enable --now cloudflared
+sudo bash ~/isl-personal-signs/deploy/ubuntu/setup-tunnel.sh   # paste the token when asked
 ```
 
-From any device: `curl https://signs.signbridgeco.xyz/health`, then open
-`https://signs.signbridgeco.xyz` and enter the API key under **Settings**.
+From any device: open `https://signs.signbridgeco.xyz`, sign up, record a sign.
 
 ## Everyday commands
 
 | Task | Command |
 |---|---|
-| Update to the latest version | `sudo bash /opt/personal-signs/deploy/ubuntu/install.sh` |
+| Update to the latest version | `cd ~/isl-personal-signs && git pull && sudo PB_PORT=8092 bash deploy/ubuntu/install.sh` |
 | Server logs | `sudo journalctl -u personal-signs -f` |
-| Tunnel logs | `sudo journalctl -u cloudflared -f` |
+| Tunnel logs | `sudo journalctl -u personal-signs-tunnel -f` |
 | Restart | `sudo systemctl restart personal-signs` |
-| Back up recordings | `sudo tar czf personal-signs-data.tgz -C /var/lib personal-signs/data` |
+| Accounts admin | `https://db.signbridgeco.xyz/_/` |
 
 ## Security notes
 
-- The server listens on `127.0.0.1` only; the tunnel is the only way in.
-- Every API call needs the API key; the key file is readable only by root and the service.
-- The service can write only to `/var/lib/personal-signs`.
-- Recordings are personal data: back them up privately and delete a person's
-  folder under `data/training_samples/` if they ask.
+- The engine and PocketBase listen on `127.0.0.1` only; the tunnel is the only way in.
+- Every API call needs a PocketBase login token; each account sees only its own signs.
+- The tunnel token in `/etc/personal-signs/tunnel.env` is readable only by root and the service.
+- Recordings are personal data (faces). Readable copies by name are in
+  `/var/lib/personal-signs/team-clips`; delete a person's folder there and under
+  `data/training_samples/` if they ask.
