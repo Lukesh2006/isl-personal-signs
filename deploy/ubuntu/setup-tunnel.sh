@@ -51,15 +51,36 @@ trap report_others EXIT
 read -rsp "Paste the tunnel token from the Cloudflare dashboard, then press Enter: " token
 echo
 token="$(printf '%s' "$token" | tr -d '[:space:]')"
+echo "Received ${#token} characters (hidden on purpose)."
 token="${token##*--token}"   # accept the whole command the dashboard shows, too
 token="${token##*install}"
-if ! [[ "$token" =~ ^[A-Za-z0-9+/=_-]{60,}$ ]]; then
-  echo "That does not look like a tunnel token. Nothing was changed." >&2
+# A tunnel token is the text starting with eyJ; drop anything else around it.
+if [[ "$token" =~ (eyJ[A-Za-z0-9+/=_-]{40,}) ]]; then
+  token="${BASH_REMATCH[1]}"
+fi
+if [[ "$token" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+  echo "That is the Tunnel ID, not the token. Copy the box with 'service install eyJ...' instead." >&2
   exit 1
 fi
-tunnel_id="$(printf '%s' "$token" | base64 -d 2>/dev/null | grep -oE '"t":"[0-9a-f-]{36}"' | cut -d'"' -f4 || true)"
-if [ -z "$tunnel_id" ]; then
-  echo "Could not read the tunnel ID from that token. Nothing was changed." >&2
+if ! [[ "$token" =~ ^eyJ[A-Za-z0-9+/=_-]{40,}$ ]]; then
+  echo "That does not look like a tunnel token (it should start with eyJ). Nothing was changed." >&2
+  exit 1
+fi
+# The token is base64 (standard or URL-safe, padding optional) of {"a":..,"t":TUNNEL_ID,"s":..}.
+tunnel_id="$(TOKEN="$token" python3 - <<'PY'
+import base64, json, os, re
+t = os.environ["TOKEN"].replace("-", "+").replace("_", "/")
+t += "=" * (-len(t) % 4)
+try:
+    data = json.loads(base64.b64decode(t))
+    tid = str(data.get("t", ""))
+    print(tid if re.fullmatch(r"[0-9a-f-]{36}", tid) else "ERR fields: " + ",".join(sorted(data)))
+except Exception as exc:
+    print("ERR " + type(exc).__name__)
+PY
+)"
+if [ -z "$tunnel_id" ] || [ "${tunnel_id#ERR}" != "$tunnel_id" ]; then
+  echo "Could not read the tunnel ID from that token (${tunnel_id:-no output}, ${#token} characters). Nothing was changed." >&2
   exit 1
 fi
 echo "This token belongs to tunnel ID: $tunnel_id"
