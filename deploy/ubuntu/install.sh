@@ -67,7 +67,7 @@ python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --quiet "$APP_DIR"
 
 echo "==> MediaPipe model files"
-mkdir -p "$DATA_DIR/data" "$DATA_DIR/models"
+mkdir -p "$DATA_DIR/data" "$DATA_DIR/models" "$DATA_DIR/team-clips"
 PERSONAL_SIGNS_MODELS_DIR="$DATA_DIR/models" "$APP_DIR/.venv/bin/python" -m personal_signs download-models >/dev/null
 chown -R personal-signs:personal-signs "$DATA_DIR"
 chmod 750 "$DATA_DIR"
@@ -104,6 +104,8 @@ env_file="$CONF_DIR/personal-signs.env"
 grep -q '^POCKETBASE_URL=' "$env_file" || echo "POCKETBASE_URL=http://127.0.0.1:$PB_PORT" >> "$env_file"
 sed -i "s#^POCKETBASE_URL=.*#POCKETBASE_URL=http://127.0.0.1:$PB_PORT#" "$env_file"
 grep -q '^POCKETBASE_PUBLIC_URL=' "$env_file" || echo "POCKETBASE_PUBLIC_URL=$PB_PUBLIC_URL" >> "$env_file"
+grep -q '^PERSONAL_SIGNS_TEAM_CLIPS_DIR=' "$env_file" \
+  || echo "PERSONAL_SIGNS_TEAM_CLIPS_DIR=$DATA_DIR/team-clips" >> "$env_file"
 chown -R root:personal-signs "$CONF_DIR"
 chmod 750 "$CONF_DIR"
 chmod 640 "$CONF_DIR"/*
