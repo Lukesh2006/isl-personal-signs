@@ -8,6 +8,7 @@
   :root { --bg:#f5f6fb; --card:#fff; --ink:#1d2040; --muted:#5d6280; --accent:#3a4bd8; --ok:#1d7a46; --warn:#a86400; --bad:#b3261e; --line:#dfe2ef; }
   @media (prefers-color-scheme: dark) { :root { --bg:#12131c; --card:#1c1e2b; --ink:#eceefa; --muted:#a3a7c2; --accent:#8c98ff; --ok:#5cc98a; --warn:#f0b35a; --bad:#ff8a80; --line:#2c2f42; } }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* .row's display:flex must not un-hide hidden blocks */
   body { margin:0; font:16px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
   main { max-width: 880px; margin: 0 auto; padding: 24px 16px 48px; }
   h1 { margin: 0 0 4px; font-size: 1.6rem; }
@@ -49,6 +50,8 @@
         <div id="loggedOut">
           <h3 style="margin:0 0 4px;font-size:1rem">Your account</h3>
           <p style="margin:0;color:var(--muted);font-size:.9rem">Your signs are private to your account.</p>
+          <label for="fullname">Your name (needed to sign up)</label>
+          <input id="fullname" type="text" autocomplete="name" maxlength="50" placeholder="e.g. Karthick S">
           <label for="email">Email</label>
           <input id="email" type="email" autocomplete="email">
           <label for="password">Password (at least 8 characters)</label>
@@ -186,10 +189,11 @@ $("login").onclick = async () => {
   catch (error) { setStatus("Could not log in: " + error.message, "bad"); }
 };
 $("signup").onclick = async () => {
-  const email = $("email").value.trim(), password = $("password").value;
+  const email = $("email").value.trim(), password = $("password").value, name = $("fullname").value.trim();
+  if (!name) { setStatus("Type your name first, so your clips are saved under it.", "warn"); return; }
   if (password.length < 8) { setStatus("Use a password with at least 8 characters.", "warn"); return; }
   try {
-    await pocketbase("/api/collections/users/records", { email, password, passwordConfirm: password });
+    await pocketbase("/api/collections/users/records", { name, email, password, passwordConfirm: password });
     await logIn(email, password);
   } catch (error) { setStatus("Could not sign up: " + error.message, "bad"); }
 };

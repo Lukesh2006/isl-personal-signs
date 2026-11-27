@@ -34,7 +34,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import __version__, engine
+from . import __version__, engine, team_archive
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 TOKEN_CACHE_SECONDS = 60
 _token_cache: dict[str, tuple[str, float]] = {}
 _token_cache_lock = threading.Lock()
+_profiles: dict[str, tuple[str, str]] = {}  # account id -> (name, email), for the team clips folder
 
 
 @asynccontextmanager
@@ -95,7 +96,8 @@ def _pocketbase_account(base_url: str, token: str) -> str:
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - configured URL
-            account = json.load(response)["record"]["id"]
+            record = json.load(response)["record"]
+            account = record["id"]
     except urllib.error.HTTPError as exc:
         if exc.code in (400, 401, 403, 404):
             raise HTTPException(status_code=401, detail="Please log in again.") from exc
@@ -110,6 +112,7 @@ def _pocketbase_account(base_url: str, token: str) -> str:
         if len(_token_cache) > 1000:
             _token_cache.clear()
         _token_cache[token] = (account, now + TOKEN_CACHE_SECONDS)
+        _profiles[account] = (str(record.get("name") or ""), str(record.get("email") or ""))
     return account
 
 
@@ -184,7 +187,17 @@ async def add_example(
     """Gate a new clip (request body = MP4/WebM bytes); saved only when reliable or confirmed."""
     user = await _user(authorization, x_user)
     clip = await request.body()
-    return await _call(engine.save_sample, user, label, clip, kind, confirm)
+    result = await _call(engine.save_sample, user, label, clip, kind, confirm)
+    root = team_archive.root_dir(os.environ)
+    if root is not None and result.get("saved"):
+        name, email = _profiles.get(user, (user, ""))
+        try:
+            await run_in_threadpool(
+                team_archive.save, root, user, name, email, result["label"], result["sample_id"], clip
+            )
+        except OSError:
+            logger.exception("Could not copy a saved clip to the team clips folder")
+    return result
 
 
 @app.delete("/signs/{label}/{sample_id}")
@@ -192,7 +205,15 @@ async def delete_example(
     label: str, sample_id: str, authorization: str | None = Header(None), x_user: str | None = Header(None)
 ):
     """Undo one saved example and keep the trained model in sync."""
-    return await _call(engine.delete_sample, await _user(authorization, x_user), label, sample_id)
+    user = await _user(authorization, x_user)
+    result = await _call(engine.delete_sample, user, label, sample_id)
+    root = team_archive.root_dir(os.environ)
+    if root is not None:
+        try:
+            await run_in_threadpool(team_archive.remove, root, user, sample_id)
+        except OSError:
+            logger.exception("Could not remove a clip from the team clips folder")
+    return result
 
 
 @app.post("/train")
