@@ -120,8 +120,10 @@ systemctl daemon-reload
 systemctl enable "$UNIT" >/dev/null
 systemctl restart "$UNIT"
 
-for _ in $(seq 1 20); do
-  if journalctl -u "$UNIT" --since "-2 min" --no-pager 2>/dev/null | grep -q "Registered tunnel connection"; then
+started="$(date '+%Y-%m-%d %H:%M:%S')"
+echo "Waiting for the tunnel to connect (cloudflared runs connectivity checks first; up to 2 minutes)..."
+for _ in $(seq 1 60); do
+  if journalctl -u "$UNIT" --since "$started" --no-pager 2>/dev/null | grep -q "Registered tunnel connection"; then
     echo "Tunnel $tunnel_id connected (service: $UNIT)."
     exit 0
   fi
